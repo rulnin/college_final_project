@@ -1,0 +1,218 @@
+---
+title: Prediction of Foreign Tourist Visits Through Air Doors 
+author: "Fakhrul Mu'minin"
+date: "10/13/2021"
+output:
+  rmdformats::material:
+    code_folding: hide
+  html_document:
+    df_print: paged
+  self_contained: yes
+  thumbnails: yes
+  lightbox: yes
+  gallery: no
+  highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Home
+Halo, selamat datang.
+
+Saya Fakhrul Mu'minin, saya mahasiswa tingkat akhir jurusan sistem informasi di Universitas Nasional.
+
+Ini adalah proyek penelitian tugas akhir saya dengan tujuan untuk memprediksi jumlah kunjungan wisatawan asing ke Indonesia dengan menggunakan tiga metode.
+
+
+## Sumber Data
+Aplikasi ini menggunakan data bulanan jumlah kunjungan wisatawan mancanegara menurut pintu masuk melalui pintu udara dengan periode Januari 2017 sampai dengan Oktober 2021.
+
+```{r}
+###All Libraries Used###
+library(readxl)
+library(modeltime)
+library(tidyverse)
+library(tidymodels)
+library(timetk)
+library(lubridate)
+library(rmdformats)
+library(DT)
+
+
+###Data Preperation###
+jkw <- read_excel("Jumlah-Wisman-Pintu-Udara.xlsx")
+
+jkw[,c(4:20)] <- sapply(jkw[,c(4:20)], as.numeric)
+
+jkw$Date <- as.Date(jkw$Date)
+
+jkw %>% datatable()
+```
+
+# Time Series Analysis
+
+Grafik data di bawah ini menunjukkan visualisasi data time series jumlah kunjungan wisatawan mancanegara melalui pintu udara ke Indonesia.
+
+```{r, fig.width=8}
+###Time Series Analysis###
+tspu <- jkw %>% select(Date, Total)
+
+tspu %>% plot_time_series(Date, Total,
+                          .title = "Jumlah Kunjungan Wisatawan Mancanegara Melalui Pintu Udara",
+                          .x_lab = "Date",
+                          .y_lab = "Jumlah Kunjungan")
+```
+
+Grafik diatas merupakan visualisasi dari data deret waktu :
+
+* Grafik menunjukkan data memiliki pola tren negatif karena mengalami penurunan yang disebabkan pandemi COVID-19
+
+* Pola tidak menunjukkan musiman dengan fluktuasi yang tidak teratur dalam beberapa tahun sebelum pandemi COVID-19 
+
+* Jumlah kunjungan wisatawan mancanegara tertinggi pada bulan Juli 2018 yaitu 1.073.385 kunjungan dan terendah pada bulan Mei 2020 yaitu 506 
+
+* Namun, di awal tahun 2020 mulai tidak menunjukkan pola yang positif, dikarenakan meningkatnya kasus COVID-19.
+
+# Forecasting
+
+Pada penelitian ini menggunakan 3 metode yaitu ARIMA, Prophet, dan Glmnet.
+
+```{r, fig.width=8}
+###Split Data###
+splits <- tspu %>%  time_series_split(
+  assess = "23 months",
+  cumulative = TRUE
+)
+
+splits %>% 
+  tk_time_series_cv_plan() %>% 
+  plot_time_series_cv_plan(Date, Total,
+                           .title = "Pemisahan Data")
+
+```
+
+
+Pembagian data :
+
+* Data pelatihan diambil dari Januari 2017 hingga Desember 2019. Data pengujian digunakan untuk pengujian prediksi dan evaluasi akurasi
+
+* Data pengujian diambil dari Januari 2020 hingga November 2021. Data pembagian ini menunjukkan ada 36 titik data analisis (Analysis), 23 contoh yang berada di penilaian (Assess), 59 total titik data asli (Total). Data pelatihan digunakan untuk pemodelan
+
+
+
+
+# Model Comparison
+
+Pada menu ini, perbandingan tiga metode yang digunakan untuk peramalan menggunakan fungsi library modeltime dilakukan.
+
+```{r}
+###FORECASTING USING THREE MODEL###
+
+# ARIMA
+model_arima <- arima_reg() %>% 
+  set_engine("auto_arima") %>% 
+  fit(Total ~ Date, training(splits))
+model_arima
+
+# Prophet
+model_prophet <- prophet_reg() %>% 
+  set_engine("prophet") %>% 
+  fit(Total ~ Date, training(splits))
+model_prophet
+
+# GLMNET
+model_glmnet <- linear_reg(penalty = 0.01) %>% 
+  set_engine("glmnet") %>% 
+  fit(Total ~ month(Date, label = TRUE) + 
+        as.numeric(Date), training(splits))
+model_glmnet
+
+
+###MODEL COMPARE###
+
+# Modeltime Table #
+model_tbl <- modeltime_table(
+  model_arima,
+  model_glmnet,
+  model_prophet
+)
+model_tbl
+```
+
+
+```{r}
+###Calibrate###
+calib_tbl <- model_tbl %>% 
+  modeltime_calibrate(testing(splits))
+calib_tbl
+```
+
+
+
+```{r, fig.width=8}
+###Test Visualization###
+
+calib_tbl %>% 
+  modeltime_forecast(actual_data = tspu) %>% 
+  plot_modeltime_forecast(.title = "Hasil Prediksi",
+                          .x_lab = "Date",
+                          .y_lab = "Jumlah Kunjungan")
+```
+
+
+Grafik diatas menunjukkan perbandingan data aktual dengan data hasil prediksi tiga model :
+
+* Data hasil prediksi ditunjukkan dengan garis yang berwarna merah sebagai model ARIMA, biru sebagai model Glmnet, dan kuning sebagai model Prophet sedangkan data aktual ditunjukkan dengan garis berwarna biru tua gelap
+
+* Berdasarkan gambar 4 diketahui bahwa semua model tidak menunjukkan kinerja yang baik dan tidak menunjukkan pola yang sama pada data aktual karena pandemi COVID-19. Maka dari itu dilakukan pengujian akurasi evaluasi untuk menentukan model yang terbaik.
+
+
+```{r}
+###Accuracy###
+calib_tbl %>% modeltime_accuracy() %>% datatable()
+```
+
+Berdasarkan hasil dari semua model :
+
+* Bahwa model ARIMA memiliki kinerja yang baik dari dua model pembanding yang menunjukkan nilai terendah dari MAE sebesar 749030.4, MAPE sebesar 23196.45, MASE sebesar 17.86681, SMAPE sebesar 175.9592, dan RMSE sebesar 779670.7. 
+
+* Model yang tidak cocok untuk data ini yaitu model Prophet dan Glmnet yang memiliki hasil yang kurang baik pada nilai MAE, MAPE, MASE, SMAPE, dan RMSE.
+
+* Model Prophet memiliki nilai RSQ sebesar 0.2075559 yang tertinggi dari model ARIMA dan Glmnet.
+
+
+
+
+# Future Forecast
+
+Setelah membandingkan ketiga metode tersebut, pada menu ini dilakukan peramalan masa depan menggunakan data asli dengan tiga metode yaitu auto ARIMA, Prophet, dan Glmnet.
+
+```{r, fig.width=8}
+###FUTURE FORECAST###
+
+future_forecast_tbl <- calib_tbl %>% 
+  modeltime_refit(tspu) %>% 
+  modeltime_forecast(
+    h = "1 year",
+    actual_data = tspu
+  )
+
+future_forecast_tbl %>% datatable()
+
+future_forecast_tbl %>% 
+  plot_modeltime_forecast(.title = "Hasil Prediksi",
+                          .x_lab = "Date",
+                          .y_lab = "Jumlah Kunjungan")
+
+```
+
+
+Berdasarkan hasil prediksi :
+
+* 12 bulan ke depan yaitu Desember 2021 hingga November 2022 menunjukkan jumlah kunjungan wisatawan mancanegara ke Indonesia melalui pintu udara cenderung mengalami peningkatan
+
+* Peningkatan terjadi pada bulan Desember 2021 sebesar 19.353 kunjungan. Namun, mengalami penurunan pada Januari 2022 menjadi sebesar 9.886 kunjungan
+
+* Setelah itu, mengalami kenaikan yang signifikan hingga April 2022 menjadi 103.127 kunjungan. Kemudian, mengalami fluktuasi hingga November 2022
